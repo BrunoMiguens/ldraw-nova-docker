@@ -16,6 +16,15 @@
 # --- Stage 1: the web UI (React + Vite) --------------------------------------
 # Runs on the build host's own architecture (fast, no emulation); its output is
 # plain static files, so it doesn't matter that the final image is amd64.
+# Fetch the core toolkit directly; Railway only supplies one build context.
+FROM --platform=$BUILDPLATFORM ubuntu:24.04 AS nova-source
+ARG NOVA_COMMIT=4070dfeab438a75719a9777b49be52a38c654f2b
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN git init /nova && git -C /nova remote add origin https://github.com/anteloc/ldraw-nova.git \
+    && git -C /nova fetch --depth=1 origin "${NOVA_COMMIT}" \
+    && git -C /nova checkout --detach FETCH_HEAD \
+    && test "$(git -C /nova rev-parse HEAD)" = "${NOVA_COMMIT}"
+
 FROM --platform=$BUILDPLATFORM node:24-slim AS frontend
 WORKDIR /src
 COPY web/frontend/package.json web/frontend/package-lock.json ./
@@ -233,14 +242,14 @@ RUN python3 -c "import pathlib, subprocess, claude_agent_sdk; subprocess.run([st
 ENV PYTHONPATH=/app
 # Keep the standalone builder intact. Only its distributable inputs enter the
 # image: never the sibling checkout's output, virtualenv, credentials or cache.
-COPY --from=nova pyproject.toml uv.lock /opt/ldraw-nova/
+COPY --from=nova-source /nova/pyproject.toml /nova/uv.lock /opt/ldraw-nova/
 RUN cd /opt/ldraw-nova && uv sync --frozen --no-dev --no-install-project --python "${PYTHON_VERSION}"
-COPY --from=nova ldraw_tools/ /opt/ldraw-nova/ldraw_tools/
-COPY --from=nova data/ /opt/ldraw-nova/data/
-COPY --from=nova docs/ /opt/ldraw-nova/docs/
-COPY --from=nova examples/ /opt/ldraw-nova/examples/
-COPY --from=nova prompts/ /opt/ldraw-nova/prompts/
-COPY --from=nova *.md *.py *.sh LICENSE CC-BY-SA-4.0 ldraw-agent /opt/ldraw-nova/
+COPY --from=nova-source /nova/ldraw_tools/ /opt/ldraw-nova/ldraw_tools/
+COPY --from=nova-source /nova/data/ /opt/ldraw-nova/data/
+COPY --from=nova-source /nova/docs/ /opt/ldraw-nova/docs/
+COPY --from=nova-source /nova/examples/ /opt/ldraw-nova/examples/
+COPY --from=nova-source /nova/prompts/ /opt/ldraw-nova/prompts/
+COPY --from=nova-source /nova/*.md /nova/*.py /nova/*.sh /nova/LICENSE /nova/CC-BY-SA-4.0 /nova/ldraw-agent /opt/ldraw-nova/
 RUN cd /opt/ldraw-nova && uv sync --locked --no-dev --python "${PYTHON_VERSION}" \
     && mkdir -p .cache && chown agent:agent .cache \
     && ln -s /data/output output \
@@ -293,11 +302,14 @@ COPY --from=xr /src/dist/ /opt/web/xr/
 # /data/generated: the model collection; /data/chats: chat history;
 # /data/output: agents' work folders (one per chat) and the CLI's default output.
 RUN mkdir -p /data/generated /data/chats /data/output
-VOLUME ["/data", "/config"]
+VOLUME ["/persist"]
 
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 
-EXPOSE 8000 8443
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
-CMD ["uvicorn", "main:app", "--app-dir", "/app/web/backend", "--host", "0.0.0.0", "--port", "8000"]
+COPY railway_app.py /app/web/backend/railway_app.py
+COPY railway-entrypoint.sh /usr/local/bin/railway-entrypoint.sh
+RUN chmod +x /usr/local/bin/railway-entrypoint.sh
+EXPOSE 8000
+ENTRYPOINT ["/usr/local/bin/railway-entrypoint.sh"]
+CMD ["uvicorn", "railway_app:app", "--app-dir", "/app/web/backend", "--host", "0.0.0.0", "--port", "8000"]

@@ -377,7 +377,17 @@ async def _run_turn(store: ChatStore, run: Run, entry: dict) -> None:
         raise
     except Exception as exc:  # noqa: BLE001 - provider/auth/network errors end the turn, not the chat
         log.warning("turn failed for chat %s: %s", chat_id, exc.__class__.__name__)
-        message = str(exc) if isinstance(exc, ValueError) else f"{exc.__class__.__name__}: Provider request failed. Check login, model access and settings."
+        if isinstance(exc, FileNotFoundError):
+            # Report only trusted toolkit paths; never log provider payloads or credentials.
+            missing = Path(exc.filename) if exc.filename else None
+            if missing and missing.is_relative_to(settings.TOOLKIT_DIR):
+                relative = missing.relative_to(settings.TOOLKIT_DIR)
+                log.warning("Missing toolkit file: %s", relative)
+                message = f"Missing LDraw toolkit file: {relative}. Check toolkit version compatibility."
+            else:
+                message = "A required local file or executable is missing. Check the deployment runtime."
+        else:
+            message = str(exc) if isinstance(exc, ValueError) else f"{exc.__class__.__name__}: Provider request failed. Check login, model access and settings."
         save({"role": "assistant", "_ui_only": True, "_error": True, "content": message})
         run.emit("turn_error", {"message": message})   # not "error": EventSource reserves it
     finally:

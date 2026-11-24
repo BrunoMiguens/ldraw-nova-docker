@@ -33,7 +33,18 @@ class AuthGate:
             supplied = b""
         if not hmac.compare_digest(supplied, self.expected):
             return await reply(401, b"Authentication required", [(b"www-authenticate", b'Basic realm="LDraw Nova", charset="UTF-8"')])
-        if headers.get(b"sec-fetch-site") == b"cross-site":
+        # A link from the Railway dashboard is cross-site even after a
+        # successful Basic Auth challenge. Allow only safe top-level UI
+        # navigation; keep cross-site API, subresource and mutation requests blocked.
+        path = scope["path"]
+        ui_navigation = (
+            scope["method"] in ("GET", "HEAD")
+            and headers.get(b"sec-fetch-mode") == b"navigate"
+            and headers.get(b"sec-fetch-dest") == b"document"
+            and not path.startswith(("/api", "/files", "/gallery-files", "/demo",
+                                     "/ldraw", "/assets", "/viewer", "/xr"))
+        )
+        if headers.get(b"sec-fetch-site") in (b"cross-site", b"same-site") and not ui_navigation:
             return await reply(403, b"Cross-site requests are not allowed")
         # Do not pass the gateway credential to upstream request handlers.
         scope = dict(scope)

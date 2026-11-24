@@ -12,11 +12,11 @@ import environment_config
 # first model call; partial tool reads were skipping design and review rules.
 # Subject-specific guides and the CLI reference remain available through tools.
 BUILDER_GUIDES = (
-    "docs/agent/ldraw-reference.md",
-    "docs/agent/geometry.md",
-    "docs/agent/visual-design.md",
-    "docs/agent/reference-discovery.md",
-    "docs/agent/validation.md",
+    "docs/agent/reference/ldraw.md",
+    "docs/agent/guides/place-parts.md",
+    "docs/agent/guides/design-models.md",
+    "docs/agent/guides/find-references.md",
+    "docs/agent/reference/validation.md",
 )
 
 
@@ -67,7 +67,9 @@ def environment() -> dict[str, str]:
 
 
 def instructions() -> str:
-    return (root() / "instructions.md").read_text()
+    source = root()
+    maintained = source / "AGENTS.md"
+    return (maintained if maintained.is_file() else source / "instructions.md").read_text()
 
 
 def builder_guides() -> str:
